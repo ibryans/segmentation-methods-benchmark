@@ -21,7 +21,7 @@ import torch.nn as nn
 import torch._utils
 import torch.nn.functional as F
 
-from core.models.bn_helper import BatchNorm2d, BatchNorm2d_class, relu_inplace
+from core.models.stronger_baseline.bn_helper import BatchNorm2d, BatchNorm2d_class, relu_inplace
 
 ALIGN_CORNERS = True
 BN_MOMENTUM = 0.1
@@ -567,7 +567,7 @@ class HighResolutionNet(nn.Module):
             BatchNorm2d(ocr_mid_channels),
             nn.ReLU(inplace=relu_inplace),
         )
-        self.ocr_gather_head = SpatialGather_Module(config['DATASET']['NUM_CLASSES'])
+        self.ocr_gather_head = SpatialGather_Module(kwargs['n_classes'])
 
         self.ocr_distri_head = SpatialOCR_Module(in_channels=ocr_mid_channels,
                                                  key_channels=ocr_key_channels,
@@ -576,14 +576,14 @@ class HighResolutionNet(nn.Module):
                                                  dropout=0.05,
                                                  )
         self.cls_head = nn.Conv2d(
-            ocr_mid_channels, config['DATASET']['NUM_CLASSES'], kernel_size=1, stride=1, padding=0, bias=True)
+            ocr_mid_channels, kwargs['n_classes'], kernel_size=1, stride=1, padding=0, bias=True)
 
         self.aux_head = nn.Sequential(
             nn.Conv2d(last_inp_channels, last_inp_channels,
                       kernel_size=1, stride=1, padding=0),
             BatchNorm2d(last_inp_channels),
             nn.ReLU(inplace=relu_inplace),
-            nn.Conv2d(last_inp_channels, config['DATASET']['NUM_CLASSES'],
+            nn.Conv2d(last_inp_channels, kwargs['n_classes'],
                       kernel_size=1, stride=1, padding=0, bias=True)
         )
 

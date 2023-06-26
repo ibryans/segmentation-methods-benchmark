@@ -21,7 +21,7 @@ if __name__ == '__main__':
     model_1 = train(SegNet(), 'data1-subset1')
     model_2 = train(SegNet(), 'data1-subset2')
     model_3 = train(UNet(), 'data2-subset-1')
-    model_4 = train(UNet(), 'data2-subset-2)
+    model_4 = train(UNet(), 'data2-subset-2')
  
     # Cria um modelo final usando voting classifier
     final_model = VotingClassifier(

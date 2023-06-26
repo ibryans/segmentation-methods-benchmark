@@ -3,8 +3,8 @@ import torchvision.models as models
 from core.models.deconvnet import DeconvNet, DeconvNet_skip
 from core.models.segnet import SegNet
 from core.models.unet import UNet
-from core.models.danet3 import DaNet3
-from core.models.sps_cbam_seg_hrnet_ocr import HighResolutionNet, get_sps_cbam_seg_model
+from core.models.danet.danet3 import DaNet3
+from core.models.stronger_baseline.sps_cbam_seg_hrnet_ocr import HighResolutionNet, get_sps_cbam_seg_model
 
 from core.models.filters import Canny, Gabor, Sobel
 
