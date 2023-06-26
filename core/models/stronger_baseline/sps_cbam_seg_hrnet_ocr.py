@@ -804,7 +804,7 @@ class HighResolutionNet(nn.Module):
 
 
 def get_sps_cbam_seg_model(**kwargs):
-    with open('core/models/seg_hrnet_ocr_w48.yaml', 'r') as f:
+    with open('core/models/stronger_baseline/seg_hrnet_ocr_w48.yaml', 'r') as f:
         cfg = yaml.load(f.read(), Loader=yaml.FullLoader)
         
     model = HighResolutionNet(cfg, **kwargs)
