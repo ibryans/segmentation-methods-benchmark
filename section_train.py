@@ -144,9 +144,6 @@ def train(args):
             optimizer.zero_grad()
             outputs = model(images)
             
-            print("\nOUTPUTS:")
-            print(type(outputs))
-            
             running_metrics_T.update(slices=outputs, targets=labels)
 
             loss = criterion(slices=outputs, targets=labels)

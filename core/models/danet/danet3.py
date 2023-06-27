@@ -1,8 +1,6 @@
 """
-@autor Bryan Oliveira
-2023
-
-Implementation of DaNet-3 (Efficient Classification of Seismic Textures)
+Implementation of DaNet-3 
+(Efficient Classification of Seismic Textures)
 """
 
 # Pytorch

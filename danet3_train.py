@@ -17,6 +17,7 @@ from core.loader import data_folders
 from core.metrics import RunningScore
 from core.utils import importName, np_to_tb, append_filter, EarlyStopper
 
+from core.models.danet.danet3 import DaNet3
 
 # Fix the random seeds: 
 numpy.random.seed(seed=2022)
@@ -39,7 +40,7 @@ class CustomSampler(torch.utils.data.Sampler):
 def train(args):
     print(args)
     # Importing class and methods at run time
-    section_dataset = importName(f'core.loader.dataset_{args.dataset}', 'section_dataset')
+    patch_dataset = importName(f'core.loader.dataset_{args.dataset}', 'patch_dataset')
     split_train_val = importName(f'core.loader.dataset_{args.dataset}', 'split_train_val')
 
     # Obtaining data folder and setting CPU/GPU device
@@ -51,7 +52,7 @@ def train(args):
 
     # Setup log files 
     border_factor = args.border_factor if args.loss_function in ['abl','dtl'] else '0.0'
-    running_name = f'{args.dataset}_{args.architecture}_D={args.channel_delta}_F={args.filter}_L={args.loss_function}_B={border_factor}_M={args.batch_size}_P={args.per_val}{"_A" if args.aug else ""}{"_W" if args.class_weights else ""}'
+    running_name = f'{args.dataset}_DaNet3_D={args.channel_delta}_F={args.filter}_L={args.loss_function}_B={border_factor}_M={args.batch_size}_P={args.per_val}{"_A" if args.aug else ""}{"_W" if args.class_weights else ""}'
     subfolders = [subfolder.path for subfolder in os.scandir('runs_section') if subfolder.is_dir()]
     if any(running_name in substr for substr in subfolders):
         print(f'[WARNING] Folder containing {running_name} already exists. Quitting!')
@@ -70,8 +71,8 @@ def train(args):
         data_aug = None
 
     # Traning accepts augmentation, unlike validation:
-    train_set = section_dataset(channel_delta=args.channel_delta, data_folder=data_folder, split='train', is_transform=True, augmentations=data_aug)
-    valid_set = section_dataset(channel_delta=args.channel_delta, data_folder=data_folder, split='val',   is_transform=True)
+    train_set = patch_dataset(data_folder=data_folder, split='train', is_transform=True, augmentations=data_aug)
+    valid_set = patch_dataset(data_folder=data_folder, split='val',   is_transform=True)
 
     # Get classes
     n_classes = train_set.n_classes
@@ -90,9 +91,12 @@ def train(args):
         if args.channel_delta > 0 and args.filter != 'None':
             raise ValueError('Multiple channels and attached filter cannot run jointly.')
         n_channels = 3 if args.channel_delta > 0 else 2 if (args.channel_delta == 0 and args.filter != 'None') else 1
-        model = getattr(core.models, core.models.architectures[args.architecture])(n_channels=n_channels, n_classes=n_classes)
+        
+        model = DaNet3(input_channels=n_channels, classes=n_classes)
+        
+        # model = getattr(core.models, core.models.architectures[args.architecture])(n_channels=n_channels, n_classes=n_classes)
         # model = core.models.get_model(args.architecture, True, n_channels, n_classes)
-        print(f'Creating Model {args.architecture.upper()} with {n_channels} input channels, delta={args.channel_delta} and filter={args.filter}')
+        print(f'Creating Model DANET-3 with {n_channels} input channels, delta={args.channel_delta} and filter={args.filter}')
     else:
         if os.path.isfile(args.resume):
             print("Loading model and optimizer from checkpoint '{}'".format(args.resume))
@@ -143,6 +147,7 @@ def train(args):
 
             optimizer.zero_grad()
             outputs = model(images)
+            
             running_metrics_T.update(slices=outputs, targets=labels)
 
             loss = criterion(slices=outputs, targets=labels)
@@ -259,3 +264,50 @@ def train(args):
             # When validation is off: save latest model
             if (epoch+1) % 10 == 0:
                 torch.save(model, os.path.join(folder_path, "model_ep{epoch+1}.pth"))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Hyperparams')
+    
+    parser.add_argument('--architecture',  type=str,   default='deconvnet',    help='Architecture to use [\'deconvnet, segnet, unet, danet3, hrnet\']', choices=['all', 'deconvnet', 'segnet', 'unet', 'danet3', 'hrnet'])
+    parser.add_argument('--batch_size',    type=int,   default=16,             help='Batch Size')
+    parser.add_argument('--channel_delta', type=int,   default=0,              help='Number of variable input channels')
+    parser.add_argument('--device',        type=str,   default='cuda:0',       help='Cuda device or cpu execution')
+    parser.add_argument('--filter',        type=str,   default='None',         help='Add filter as an extra channel/layer', choices=['None', 'canny', 'gabor', 'sobel'])
+    parser.add_argument('--loss_function', type=str,   default='abl',          help='Loss function to use [\'ABL, ABV, CEL\']', choices=['abl','abv','cel','dtl'])
+    parser.add_argument('--border_factor', type=float, default=0.1,            help='Weight to multiply the border loss [\'0.1-1.0\']')
+    parser.add_argument('--n_epoch',       type=int,   default=60,             help='# of the epochs')
+
+    parser.add_argument('--save_folder',   type=str,   default='runs_section', help='Folder storing execution outputs')
+    parser.add_argument('--dataset',       type=str,   default='NL',           help='Name of the adopted dataset: NL (Netherlands F3 Block), NS (Nova Scotia Penobscot), NZ (New Zealand Petroleum).', choices=['NL', 'NS', 'NZ'])
+    parser.add_argument('--resume',        type=str,   default=None,           help='Path to previous saved model to restart from')
+    parser.add_argument('--clip',          type=float, default=0.0,            help='Max norm of the gradients if clipping. Set to zero to disable. ')
+    parser.add_argument('--per_val',       type=float, default=0.10,           help='Percentage of the training data for validation')
+    parser.add_argument('--pretrained',    type=bool,  default=False,          help='Pretrained models not supported. Keep as False for now.')
+    parser.add_argument('--aug',           action='store_true',                help='Whether to use data augmentation.')
+    parser.add_argument('--class_weights', action='store_true',                help='Whether to use class weights to reduce the effect of class imbalance')
+
+    local_params = [
+        '--architecture', 'deconvnet',
+        '--batch_size', '1',
+        '--channel_delta', '0',
+        '--device', 'cpu',
+        '--filter', 'None',
+        '--loss_function', 'dtl',
+        '--border_factor', '0.1',
+        '--n_epoch', '10',
+        
+        '--dataset', 'NL',
+        '--clip', '0.1',
+        '--per_val', '0.1',
+        '--aug', 
+        '--class_weights'
+    ]
+
+    args = parser.parse_args(args=None)
+    if args.architecture != 'all':
+        train(args)
+    else:
+        for arch in ['deconvnet','segnet','unet', 'danet-3', 'hrnet']:
+            args.architecture = arch
+            train(args)

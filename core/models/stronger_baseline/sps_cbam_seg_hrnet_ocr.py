@@ -771,7 +771,8 @@ class HighResolutionNet(nn.Module):
         out_aux_seg.append(out_aux)
         out_aux_seg.append(out)
 
-        return out_aux_seg
+        # return out_aux_seg
+        return out
 
     def init_weights(self, pretrained='', ):
         logger.info('=> init weights from normal distribution')

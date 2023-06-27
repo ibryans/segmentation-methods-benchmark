@@ -1,7 +1,4 @@
 """
-@autor Bryan Oliveira
-2023
-
 Implementation of Ensemble learning method for segnet and unet 
 (Seismic Facies Analysis Based on Deep Learning)
 """

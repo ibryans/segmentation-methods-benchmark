@@ -48,7 +48,7 @@ def test(args):
     model = model.to(device)
 
     running_metrics = None
-    two_stream = type(model) is core.models.DeconvNetTS
+    two_stream = None # type(model) is core.models.DeconvNetTS
 
     if 'both' in args.split: splits = ['test1', 'test2']
     else: splits = [args.split]
