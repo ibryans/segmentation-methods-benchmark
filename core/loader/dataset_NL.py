@@ -74,6 +74,141 @@ def split_test_eval(args, data_folder, split, loader_type='section', per_val=Non
     file_object.write('\n'.join(list_test))
     file_object.close()
 
+
+
+class patch_dataset(torch.utils.data.Dataset):
+    """
+        Data loader for the patch-based deconvnet
+    """
+    def __init__(self, split='train', stride=30, patch_size=99, data_folder='data_NL', is_transform=True, augmentations=None):
+        self.split = split
+        self.data_folder = data_folder
+        self.is_transform = is_transform
+        self.augmentations = augmentations
+        self.n_classes = 6 
+        self.mean = 0.000941 # average of the training data  
+        self.patches = collections.defaultdict(list)
+        self.patch_size = patch_size
+        self.stride = stride
+
+        if self.split in ['train', 'val', 'train_val']:
+            # Normal train/val mode
+            self.seismic = self.pad_volume(numpy.load(os.path.join(self.data_folder,'train','train_seismic.npy')))
+            self.labels = self.pad_volume(numpy.load(os.path.join(self.data_folder,'train','train_labels.npy')))
+        elif 'test1' in self.split:
+            self.seismic = numpy.load(os.path.join(self.data_folder,'test_once','test1_seismic.npy'))
+            self.labels = numpy.load(os.path.join(self.data_folder,'test_once','test1_labels.npy'))
+        elif 'test2' in self.split:
+            self.seismic = numpy.load(os.path.join(self.data_folder,'test_once','test2_seismic.npy'))
+            self.labels = numpy.load(os.path.join(self.data_folder,'test_once','test2_labels.npy'))
+        else:
+            raise ValueError('Unknown split: train, val, train_val, test1, test2')
+
+        if self.split in ['train', 'val', 'train_val']:
+            # We are in train/val mode. Most likely the test splits are not saved yet, so don't attempt to load them.  
+            for split in ['train', 'val', 'train_val']:
+                # reading the file names for 'train', 'val', 'trainval'""
+                path = os.path.join(self.data_folder, 'splits', f'patch_{split}.txt')
+                patch_list = tuple(open(path, 'r'))
+                # patch_list = [id_.rstrip() for id_ in patch_list]
+                self.patches[split] = patch_list
+        elif 'test' in split:
+            # We are in test mode. Only read the given split. The other one might not be available. 
+            path = os.path.join(self.data_folder, 'splits', 'patch_{split}.txt')
+            file_list = tuple(open(path,'r'))
+            # patch_list = [id_.rstrip() for id_ in patch_list]
+            self.patches[split] = patch_list
+        else:
+            raise ValueError('Unknown split: train, val, train_val, test1, test2')
+
+    def pad_volume(self,volume):
+        '''
+        Only used for train/val!! Not test.
+        '''
+        assert 'test' not in self.split, 'There should be no padding for test time!'
+        return numpy.pad(volume, pad_width=self.patch_size, mode='constant', constant_values=255)
+        
+
+    def __len__(self):
+        return len(self.patches[self.split])
+
+    def __getitem__(self, index):
+        """
+        Dataset shape: (401, 701, 255)
+            "num_inlines": 401
+            "num_crosslines": 701
+            "num_time_depth": 255
+        """
+        patch_name = self.patches[self.split][index]
+        direction, idx, xdx, ddx = patch_name.split(sep='_')
+
+        shift = (self.patch_size if 'test' not in self.split else 0)
+        idx, xdx, ddx = int(idx)+shift, int(xdx)+shift, int(ddx)+shift
+
+        if direction == 'i':
+            img = self.seismic[idx,xdx:xdx+self.patch_size,ddx:ddx+self.patch_size]
+            lbl = self.labels[idx,xdx:xdx+self.patch_size,ddx:ddx+self.patch_size]
+        elif direction == 'x':    
+            img = self.seismic[idx: idx+self.patch_size, xdx, ddx:ddx+self.patch_size]
+            lbl = self.labels[idx: idx+self.patch_size, xdx, ddx:ddx+self.patch_size]
+
+        if self.augmentations is not None:
+            img, lbl = self.augmentations(img, lbl)
+            
+        if self.is_transform:
+            img, lbl = self.transform(img, lbl)
+        return img, lbl
+
+
+    def transform(self, img, lbl):
+        img -= self.mean
+
+        # to be in the BxCxHxW that PyTorch uses: 
+        img, lbl = img.T, lbl.T
+
+        img = numpy.expand_dims(img,0)
+        lbl = numpy.expand_dims(lbl,0)
+
+        img = torch.from_numpy(img).float()
+        lbl = torch.from_numpy(lbl).long()
+                
+        return img, lbl
+
+    def get_seismic_colors(self):
+        return numpy.asarray([ [69,117,180], [145,191,219], [224,243,248], [254,224,144], [252,141,89], [215,48,39]])
+
+
+    def decode_segmap(self, label_mask, plot=False):
+        """Decode segmentation class labels into a color image
+        Args:
+            label_mask (numpy.ndarray): an (M,N) array of integer values denoting
+              the class label at each spatial location.
+            plot (bool, optional): whether to show the resulting color image
+              in a figure.
+        Returns:
+            (numpy.ndarray, optional): the resulting decoded color image.
+        """
+        label_colours = self.get_seismic_colors()
+        r = label_mask.copy()
+        g = label_mask.copy()
+        b = label_mask.copy()
+        for ll in range(0, self.n_classes):
+            r[label_mask == ll] = label_colours[ll, 0]
+            g[label_mask == ll] = label_colours[ll, 1]
+            b[label_mask == ll] = label_colours[ll, 2]
+        rgb = numpy.zeros((label_mask.shape[0], label_mask.shape[1], 3))
+        rgb[:, :, 0] = r / 255.0
+        rgb[:, :, 1] = g / 255.0
+        rgb[:, :, 2] = b / 255.0
+        if plot:
+            plt.tight_layout()
+            plt.imshow(rgb)
+            plt.show()
+        else:
+            return rgb
+
+
+
         
 class section_dataset(torch.utils.data.Dataset):
     """
