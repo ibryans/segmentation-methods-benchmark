@@ -1,5 +1,4 @@
 import argparse
-
 import datetime
 import json
 import numpy
@@ -9,9 +8,7 @@ import torchvision
 
 from tqdm import tqdm
 
-
 import core
-
 from core.augmentations import Compose, AddNoise, RandomRotate, RandomVerticallyFlip
 from core.loader import data_folders
 from core.metrics import RunningScore
@@ -36,20 +33,8 @@ class CustomSampler(torch.utils.data.Sampler):
         return (self.indices[i] for i in torch.randperm(len(self.indices)))
 
 
-def train(args):
-    print(args)
-    # Importing class and methods at run time
-    section_dataset = importName(f'core.loader.dataset_{args.dataset}', 'section_dataset')
-    split_train_val = importName(f'core.loader.dataset_{args.dataset}', 'split_train_val')
-
-    # Obtaining data folder and setting CPU/GPU device
-    data_folder = data_folders[args.dataset]
-    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
-    
-    # Generate the train and validation sets for the model:
-    split_train_val(args, data_folder, per_val=args.per_val)
-
-    # Setup log files 
+# Setando os arquivos de log
+def setup_log_files(args):
     border_factor = args.border_factor if args.loss_function in ['abl','dtl'] else '0.0'
     running_name = f'{args.dataset}_{args.architecture}_D={args.channel_delta}_F={args.filter}_L={args.loss_function}_B={border_factor}_M={args.batch_size}_P={args.per_val}{"_A" if args.aug else ""}{"_W" if args.class_weights else ""}'
     subfolders = [subfolder.path for subfolder in os.scandir('runs_section') if subfolder.is_dir()]
@@ -60,8 +45,32 @@ def train(args):
     else:
         folder_path = os.path.join(args.save_folder, f'{running_name}_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}')
         os.mkdir(folder_path)
+
+    return border_factor, running_name, folder_path
+
+
+def train(args):
+    print(args)
+
+    # Importando os métodos de loader do dataset
+    section_dataset = importName(f'core.loader.dataset_{args.dataset}', 'section_dataset')
+    split_train_val = importName(f'core.loader.dataset_{args.dataset}', 'split_train_val')
+
+
+    # Setando o diretório do dataset e o device
+    data_folder = data_folders[args.dataset]
+    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     
-    # Setup augmentations
+
+    # Separando os dados em treino/validação
+    split_train_val(args, data_folder, per_val=args.per_val)
+
+
+    # Logging
+    border_factor, running_name, folder_path = setup_log_files(args)
+    
+
+    # Augmentations
     if args.aug:
         print('Data Augmentation ON.')
         data_aug = Compose([RandomRotate(degree=10), RandomVerticallyFlip(), AddNoise()])
@@ -69,37 +78,53 @@ def train(args):
         print('Data Augmentation OFF.')
         data_aug = None
 
-    # Traning accepts augmentation, unlike validation:
+
+    # Criando os datasets de treino/validação
     train_set = section_dataset(channel_delta=args.channel_delta, data_folder=data_folder, split='train', is_transform=True, augmentations=data_aug)
     valid_set = section_dataset(channel_delta=args.channel_delta, data_folder=data_folder, split='val',   is_transform=True)
 
-    # Get classes
+
+    # Quantidade e nome das classes
     n_classes = train_set.n_classes
     class_names = train_set.get_class_names()
+
 
     # Create sampler:
     with open(os.path.join(data_folder, 'splits', 'section_train.txt'), 'r') as file_buffer:
         train_list = file_buffer.read().splitlines()
+
     with open(os.path.join(data_folder, 'splits', 'section_val.txt'), 'r') as file_buffer:
         val_list = file_buffer.read().splitlines()
+
+
+    # Criando os loaders de treino/validação
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=args.batch_size, sampler=CustomSampler(train_list), num_workers=0, shuffle=False)
     valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=args.batch_size, sampler=CustomSampler(val_list),   num_workers=0)
 
-    # Setup Model
+
+    # Instanciando o modelo
     if args.resume is None:
         if args.channel_delta > 0 and args.filter != 'None':
             raise ValueError('Multiple channels and attached filter cannot run jointly.')
+        
         n_channels = 3 if args.channel_delta > 0 else 2 if (args.channel_delta == 0 and args.filter != 'None') else 1
-        model = getattr(core.models, core.models.architectures[args.architecture])(n_channels=n_channels, n_classes=n_classes)
-        # model = core.models.get_model(args.architecture, True, n_channels, n_classes)
+
+        model = core.models.get_model(args.architecture, True, n_channels, n_classes)
+
         print(f'Creating Model {args.architecture.upper()} with {n_channels} input channels, delta={args.channel_delta} and filter={args.filter}')
+    
+
+    # Restaurando um modelo que já estava em processo de treinamento
     else:
         if os.path.isfile(args.resume):
             print("Loading model and optimizer from checkpoint '{}'".format(args.resume))
             model = torch.load(args.resume)
         else:
             print("No checkpoint found at '{}'".format(args.resume))
+
+
     model = model.to(device)
+
 
     # Weights are inversely proportional to the frequency of the classes in the training set
     if args.class_weights:
@@ -109,6 +134,7 @@ def train(args):
         print('Weighted Loss Disabled.') 
         class_weights = None
 
+
     # Instantiating criterion and optimizer
     loss_map = {
         'cel':('CrossEntropyLoss',      {'reduction':'sum', 'weight':class_weights}),
@@ -116,36 +142,42 @@ def train(args):
         'abv':('ActiveBoundaryLoss_',   {'device':device, 'reduction':'sum', 'weight':class_weights}),
         'dtl':('DistanceTransformLoss', {'border_factor':args.border_factor, 'reduction':'sum', 'weight':class_weights})
     }
+
     loss_name, loss_args = loss_map[args.loss_function]
     criterion = getattr(core.loss, loss_name)(**loss_args)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, amsgrad=True)
-    # optimizer = torch.optim.Adadelta(model.parameters())
+
 
     # Setup metrics and early stopping
-    early_stopper     = EarlyStopper(tolerance=int(0.1*args.n_epoch))
+    early_stopper     = EarlyStopper(tolerance = int(0.1 * args.n_epoch))
     running_metrics_T = RunningScore(n_classes, threshold=2)
     running_metrics_V = RunningScore(n_classes, threshold=2)
 
-    # training
+
     img_processor = None
+
+    # Processo de treinamento
     for epoch in range(args.n_epoch):
-        # Training Mode:
+        
         model.train()
         loss_train, batch_counter = 0, 0
-        
         print(datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"))
+
         for batch, (images, labels) in enumerate(train_loader):
             image_original, labels_original = images, labels
             images, labels = images.to(device), labels.to(device)
+
             if args.filter != 'None':
                 if img_processor is None: img_processor = append_filter(args.filter, device=device)
                 images = img_processor(images, concat=True)
 
             optimizer.zero_grad()
+
+            # Pegando a predição do modelo
             outputs = model(images)
             
+            # Atualizando as métricas e rodando a função de perda
             running_metrics_T.update(slices=outputs, targets=labels)
-
             loss = criterion(slices=outputs, targets=labels)
             loss_train += loss.item()
             loss.backward()
@@ -265,8 +297,8 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Hyperparams')
     
-    parser.add_argument('--architecture',  type=str,   default='deconvnet',    help='Architecture to use [\'deconvnet, segnet, unet, danet3, hrnet\']', choices=['all', 'deconvnet', 'segnet', 'unet', 'danet3', 'hrnet'])
-    parser.add_argument('--batch_size',    type=int,   default=12,             help='Batch Size')
+    parser.add_argument('--architecture',  type=str,   default='hrnet',        help='Architecture to use [\'deconvnet, segnet, unet, danet3, hrnet\']', choices=['all', 'deconvnet', 'segnet', 'unet', 'danet3', 'hrnet'])
+    parser.add_argument('--batch_size',    type=int,   default=16,             help='Batch Size')
     parser.add_argument('--channel_delta', type=int,   default=0,              help='Number of variable input channels')
     parser.add_argument('--device',        type=str,   default='cuda:0',       help='Cuda device or cpu execution')
     parser.add_argument('--filter',        type=str,   default='None',         help='Add filter as an extra channel/layer', choices=['None', 'canny', 'gabor', 'sobel'])
@@ -304,6 +336,6 @@ if __name__ == '__main__':
     if args.architecture != 'all':
         train(args)
     else:
-        for arch in ['deconvnet','segnet','unet', 'danet-3', 'hrnet']:
+        for arch in ['deconvnet','segnet','unet', 'danet3', 'hrnet']:
             args.architecture = arch
             train(args)

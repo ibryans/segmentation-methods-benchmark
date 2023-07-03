@@ -5,7 +5,7 @@ import skimage
 import torch 
 import torchvision
 
-from ..models import Canny, Gabor, Sobel
+from ..models.filters import Canny, Gabor, Sobel
 
 
 __all__ = ['importName', 'append_filter', 'np_to_tb', 'plot_confusion_matrix']

@@ -80,7 +80,7 @@ class patch_dataset(torch.utils.data.Dataset):
     """
         Data loader for the patch-based deconvnet
     """
-    def __init__(self, split='train', stride=30, patch_size=99, data_folder='data_NL', is_transform=True, augmentations=None):
+    def __init__(self, split='train', stride=30, patch_size=40, data_folder='data_NL', is_transform=True, augmentations=None):
         self.split = split
         self.data_folder = data_folder
         self.is_transform = is_transform
